@@ -178,6 +178,7 @@ func SideLock(ctx context.Context) (unlock func(), err error) {
 // It serializes calls to the underlying Repo.
 type cachingRepo struct {
 	path          string
+	modFilename   string
 	versionsCache par.ErrCache[string, *Versions]
 	statCache     par.ErrCache[string, *RevInfo]
 	latestCache   par.ErrCache[struct{}, *RevInfo]
@@ -239,7 +240,7 @@ func (r *cachingRepo) Stat(ctx context.Context, rev string) (*RevInfo, error) {
 		return r.repo(ctx).Stat(ctx, rev)
 	}
 	info, err := r.statCache.Do(rev, func() (*RevInfo, error) {
-		file, info, err := readDiskStat(ctx, r.path, rev)
+		file, info, err := readDiskStat(ctx, module.Version{Path: r.path, ModFilename: r.modFilename, Version: rev})
 		if err == nil {
 			return info, err
 		}
@@ -281,7 +282,7 @@ func (r *cachingRepo) Latest(ctx context.Context) (*RevInfo, error) {
 			r.statCache.Do(info.Version, func() (*RevInfo, error) {
 				return info, nil
 			})
-			if file, _, err := readDiskStat(ctx, r.path, info.Version); err != nil {
+			if file, _, err := readDiskStat(ctx, module.Version{Path: r.path, ModFilename: r.modFilename, Version: info.Version}); err != nil {
 				writeDiskStat(ctx, file, info)
 			}
 		}
@@ -301,7 +302,7 @@ func (r *cachingRepo) GoMod(ctx context.Context, version string) ([]byte, error)
 		return r.repo(ctx).GoMod(ctx, version)
 	}
 	text, err := r.gomodCache.Do(version, func() ([]byte, error) {
-		file, text, err := readDiskGoMod(ctx, r.path, version)
+		file, text, err := readDiskGoMod(ctx, module.Version{Path: r.path, ModFilename: r.modFilename, Version: version})
 		if err == nil {
 			// Note: readDiskGoMod already called checkGoMod.
 			return text, nil
@@ -309,7 +310,7 @@ func (r *cachingRepo) GoMod(ctx context.Context, version string) ([]byte, error)
 
 		text, err = r.repo(ctx).GoMod(ctx, version)
 		if err == nil {
-			if err := checkGoMod(r.path, version, text); err != nil {
+			if err := checkGoMod(module.Version{Path: r.path, ModFilename: r.modFilename, Version: version}, text); err != nil {
 				return text, err
 			}
 			if err := writeDiskGoMod(ctx, file, text); err != nil {
@@ -333,19 +334,19 @@ func (r *cachingRepo) Zip(ctx context.Context, dst io.Writer, version string) er
 
 // InfoFile is like Lookup(ctx, path).Stat(version) but also returns the name of the file
 // containing the cached information.
-func InfoFile(ctx context.Context, path, version string) (*RevInfo, string, error) {
-	if !gover.ModIsValid(path, version) {
-		return nil, "", fmt.Errorf("invalid version %q", version)
+func InfoFile(ctx context.Context, mod module.Version) (*RevInfo, string, error) {
+	if !gover.ModIsValid(mod.Path, mod.Version) {
+		return nil, "", fmt.Errorf("invalid version %q", mod.Version)
 	}
 
-	if file, info, err := readDiskStat(ctx, path, version); err == nil {
+	if file, info, err := readDiskStat(ctx, mod); err == nil {
 		return info, file, nil
 	}
 
 	var info *RevInfo
 	var err2info map[error]*RevInfo
 	err := TryProxies(func(proxy string) error {
-		i, err := Lookup(ctx, proxy, path).Stat(ctx, version)
+		i, err := Lookup(ctx, proxy, mod.Path, mod.ModFilename).Stat(ctx, mod.Version)
 		if err == nil {
 			info = i
 		} else {
@@ -361,7 +362,7 @@ func InfoFile(ctx context.Context, path, version string) (*RevInfo, string, erro
 	}
 
 	// Stat should have populated the disk cache for us.
-	file, err := CachePath(ctx, module.Version{Path: path, Version: version}, "info")
+	file, err := CachePath(ctx, mod, "info")
 	if err != nil {
 		return nil, "", err
 	}
@@ -371,20 +372,20 @@ func InfoFile(ctx context.Context, path, version string) (*RevInfo, string, erro
 // GoMod is like Lookup(ctx, path).GoMod(rev) but avoids the
 // repository path resolution in Lookup if the result is
 // already cached on local disk.
-func GoMod(ctx context.Context, path, rev string) ([]byte, error) {
+func GoMod(ctx context.Context, mod module.Version) ([]byte, error) {
 	// Convert commit hash to pseudo-version
 	// to increase cache hit rate.
-	if !gover.ModIsValid(path, rev) {
-		if _, info, err := readDiskStat(ctx, path, rev); err == nil {
-			rev = info.Version
+	if !gover.ModIsValid(mod.Path, mod.Version) {
+		if _, info, err := readDiskStat(ctx, mod); err == nil {
+			mod.Version = info.Version
 		} else {
 			if errors.Is(err, statCacheErr) {
 				return nil, err
 			}
 			err := TryProxies(func(proxy string) error {
-				info, err := Lookup(ctx, proxy, path).Stat(ctx, rev)
+				info, err := Lookup(ctx, proxy, mod.Path, mod.ModFilename).Stat(ctx, mod.Version)
 				if err == nil {
-					rev = info.Version
+					mod.Version = info.Version
 				}
 				return err
 			})
@@ -394,13 +395,13 @@ func GoMod(ctx context.Context, path, rev string) ([]byte, error) {
 		}
 	}
 
-	_, data, err := readDiskGoMod(ctx, path, rev)
+	_, data, err := readDiskGoMod(ctx, mod)
 	if err == nil {
 		return data, nil
 	}
 
 	err = TryProxies(func(proxy string) (err error) {
-		data, err = Lookup(ctx, proxy, path).GoMod(ctx, rev)
+		data, err = Lookup(ctx, proxy, mod.Path, mod.ModFilename).GoMod(ctx, mod.Version)
 		return err
 	})
 	return data, err
@@ -408,15 +409,15 @@ func GoMod(ctx context.Context, path, rev string) ([]byte, error) {
 
 // GoModFile is like GoMod but returns the name of the file containing
 // the cached information.
-func GoModFile(ctx context.Context, path, version string) (string, error) {
-	if !gover.ModIsValid(path, version) {
-		return "", fmt.Errorf("invalid version %q", version)
+func GoModFile(ctx context.Context, mod module.Version) (string, error) {
+	if !gover.ModIsValid(mod.Path, mod.Version) {
+		return "", fmt.Errorf("invalid version %q", mod.Version)
 	}
-	if _, err := GoMod(ctx, path, version); err != nil {
+	if _, err := GoMod(ctx, mod); err != nil {
 		return "", err
 	}
 	// GoMod should have populated the disk cache for us.
-	file, err := CachePath(ctx, module.Version{Path: path, Version: version}, "mod")
+	file, err := CachePath(ctx, mod, "mod")
 	if err != nil {
 		return "", err
 	}
@@ -425,15 +426,15 @@ func GoModFile(ctx context.Context, path, version string) (string, error) {
 
 // GoModSum returns the go.sum entry for the module version's go.mod file.
 // (That is, it returns the entry listed in go.sum as "path version/go.mod".)
-func GoModSum(ctx context.Context, path, version string) (string, error) {
-	if !gover.ModIsValid(path, version) {
-		return "", fmt.Errorf("invalid version %q", version)
+func GoModSum(ctx context.Context, mod module.Version) (string, error) {
+	if !gover.ModIsValid(mod.Path, mod.Version) {
+		return "", fmt.Errorf("invalid version %q", mod.Version)
 	}
-	data, err := GoMod(ctx, path, version)
+	data, err := GoMod(ctx, mod)
 	if err != nil {
 		return "", err
 	}
-	sum, err := goModSum(data)
+	sum, err := goModSum(mod.ModFilename, data)
 	if err != nil {
 		return "", err
 	}
@@ -446,11 +447,11 @@ var errNotCached = fmt.Errorf("not in cache")
 // returning the name of the cache file and the result.
 // If the read fails, the caller can use
 // writeDiskStat(file, info) to write a new cache entry.
-func readDiskStat(ctx context.Context, path, rev string) (file string, info *RevInfo, err error) {
-	if gover.IsToolchain(path) {
+func readDiskStat(ctx context.Context, mod module.Version) (file string, info *RevInfo, err error) {
+	if gover.IsToolchain(mod.Path) {
 		return "", nil, errNotCached
 	}
-	file, data, err := readDiskCache(ctx, path, rev, "info")
+	file, data, err := readDiskCache(ctx, mod, "info")
 	if err != nil {
 		// If the cache already contains a pseudo-version with the given hash, we
 		// would previously return that pseudo-version without checking upstream.
@@ -472,7 +473,7 @@ func readDiskStat(ctx context.Context, path, rev string) (file string, info *Rev
 		// Fall back to this resolution scheme only if the GOPROXY setting prohibits
 		// us from resolving upstream tags.
 		if cfg.GOPROXY == "off" {
-			if file, info, err := readDiskStatByHash(ctx, path, rev); err == nil {
+			if file, info, err := readDiskStatByHash(ctx, mod.Path, mod.Version); err == nil {
 				return file, info, nil
 			}
 		}
@@ -539,7 +540,7 @@ func readDiskStatByHash(ctx context.Context, path, rev string) (file string, inf
 			v := strings.TrimSuffix(name, ".info")
 			if module.IsPseudoVersion(v) && semver.Compare(v, maxVersion) > 0 {
 				maxVersion = v
-				file, info, err = readDiskStat(ctx, path, strings.TrimSuffix(name, ".info"))
+				file, info, err = readDiskStat(ctx, module.Version{Path: path, ModFilename: strings.TrimSuffix(name, ".info"), Version: rev})
 			}
 		}
 	}
@@ -557,11 +558,11 @@ var oldVgoPrefix = []byte("//vgo 0.0.")
 // returning the name of the cache file and the result.
 // If the read fails, the caller can use
 // writeDiskGoMod(file, data) to write a new cache entry.
-func readDiskGoMod(ctx context.Context, path, rev string) (file string, data []byte, err error) {
-	if gover.IsToolchain(path) {
+func readDiskGoMod(ctx context.Context, mod module.Version) (file string, data []byte, err error) {
+	if gover.IsToolchain(mod.Path) {
 		return "", nil, errNotCached
 	}
-	file, data, err = readDiskCache(ctx, path, rev, "mod")
+	file, data, err = readDiskCache(ctx, mod, "mod")
 
 	// If the file has an old auto-conversion prefix, pretend it's not there.
 	if bytes.HasPrefix(data, oldVgoPrefix) {
@@ -570,7 +571,7 @@ func readDiskGoMod(ctx context.Context, path, rev string) (file string, data []b
 	}
 
 	if err == nil {
-		if err := checkGoMod(path, rev, data); err != nil {
+		if err := checkGoMod(mod, data); err != nil {
 			return "", nil, err
 		}
 	}
@@ -583,11 +584,11 @@ func readDiskGoMod(ctx context.Context, path, rev string) (file string, data []b
 // It returns the name of the cache file and the content of the file.
 // If the read fails, the caller can use
 // writeDiskCache(file, data) to write a new cache entry.
-func readDiskCache(ctx context.Context, path, rev, suffix string) (file string, data []byte, err error) {
-	if gover.IsToolchain(path) {
+func readDiskCache(ctx context.Context, mod module.Version, suffix string) (file string, data []byte, err error) {
+	if gover.IsToolchain(mod.Path) {
 		return "", nil, errNotCached
 	}
-	file, err = CachePath(ctx, module.Version{Path: path, Version: rev}, suffix)
+	file, err = CachePath(ctx, mod, suffix)
 	if err != nil {
 		return "", nil, errNotCached
 	}
