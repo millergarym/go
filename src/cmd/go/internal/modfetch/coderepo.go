@@ -32,6 +32,9 @@ import (
 type codeRepo struct {
 	modPath string
 
+	// modFilename defaults to "go.mod", and can be specified to use a different module file
+	modFilename string
+
 	// code is the repository containing this module.
 	code codehost.Repo
 	// codeRoot is the import path at the root of code.
@@ -61,7 +64,7 @@ type codeRepo struct {
 // newCodeRepo returns a Repo that reads the source code for the module with the
 // given path, from the repo stored in code, with the root of the repo
 // containing the path given by codeRoot.
-func newCodeRepo(code codehost.Repo, codeRoot, path string) (Repo, error) {
+func newCodeRepo(code codehost.Repo, codeRoot, path, modFilename string) (Repo, error) {
 	if !hasPathPrefix(path, codeRoot) {
 		return nil, fmt.Errorf("mismatched repo: found %s for %s", codeRoot, path)
 	}
@@ -118,6 +121,7 @@ func newCodeRepo(code codehost.Repo, codeRoot, path string) (Repo, error) {
 
 	r := &codeRepo{
 		modPath:     path,
+		modFilename: modFilename,
 		code:        code,
 		codeRoot:    codeRoot,
 		codeDir:     codeDir,
@@ -219,7 +223,7 @@ func (r *codeRepo) appendIncompatibleVersions(ctx context.Context, origin *codeh
 	}
 
 	versionHasGoMod := func(v string) (bool, error) {
-		_, err := r.code.ReadFile(ctx, v, "go.mod", codehost.MaxGoMod)
+		_, err := r.code.ReadFile(ctx, v, r.modFilename, codehost.MaxGoMod)
 		if err == nil {
 			return true, nil
 		}
@@ -352,7 +356,7 @@ func (r *codeRepo) convert(ctx context.Context, info *codehost.RevInfo, statVers
 
 		ok, seen := incompatibleOk[""]
 		if !seen {
-			_, errGoMod := r.code.ReadFile(ctx, info.Name, "go.mod", codehost.MaxGoMod)
+			_, errGoMod := r.code.ReadFile(ctx, info.Name, r.modFilename, codehost.MaxGoMod)
 			ok = (errGoMod != nil)
 			incompatibleOk[""] = ok
 		}
@@ -370,7 +374,7 @@ func (r *codeRepo) convert(ctx context.Context, info *codehost.RevInfo, statVers
 			major := semver.Major(v)
 			ok, seen = incompatibleOk[major]
 			if !seen {
-				_, errGoModSub := r.code.ReadFile(ctx, info.Name, path.Join(major, "go.mod"), codehost.MaxGoMod)
+				_, errGoModSub := r.code.ReadFile(ctx, info.Name, path.Join(major, r.modFilename), codehost.MaxGoMod)
 				ok = (errGoModSub != nil)
 				incompatibleOk[major] = ok
 			}
@@ -795,12 +799,12 @@ func (r *codeRepo) findDir(ctx context.Context, version string) (rev, dir string
 
 	// Load info about go.mod but delay consideration
 	// (except I/O error) until we rule out v2/go.mod.
-	file1 := path.Join(r.codeDir, "go.mod")
+	file1 := path.Join(r.codeDir, r.modFilename)
 	gomod1, err1 := r.code.ReadFile(ctx, rev, file1, codehost.MaxGoMod)
 	if err1 != nil && !os.IsNotExist(err1) {
 		return "", "", nil, fmt.Errorf("reading %s/%s at revision %s: %v", r.codeRoot, file1, rev, err1)
 	}
-	mpath1 := modfile.ModulePath(gomod1)
+	mpath1 := modfile.ModulePath(r.modFilename, gomod1)
 	found1 := err1 == nil && (isMajor(mpath1, r.pathMajor) || r.canReplaceMismatchedVersionDueToBug(mpath1))
 
 	var file2 string
@@ -813,16 +817,16 @@ func (r *codeRepo) findDir(ctx context.Context, version string) (rev, dir string
 		// the real module, found at a different path, usable only in
 		// a replace directive.
 		dir2 := path.Join(r.codeDir, r.pathMajor[1:])
-		file2 = path.Join(dir2, "go.mod")
+		file2 = path.Join(dir2, r.modFilename)
 		gomod2, err2 := r.code.ReadFile(ctx, rev, file2, codehost.MaxGoMod)
 		if err2 != nil && !os.IsNotExist(err2) {
 			return "", "", nil, fmt.Errorf("reading %s/%s at revision %s: %v", r.codeRoot, file2, rev, err2)
 		}
-		mpath2 := modfile.ModulePath(gomod2)
+		mpath2 := modfile.ModulePath(r.modFilename, gomod2)
 		found2 := err2 == nil && isMajor(mpath2, r.pathMajor)
 
 		if found1 && found2 {
-			return "", "", nil, fmt.Errorf("%s/%s and ...%s/go.mod both have ...%s module paths at revision %s", r.pathPrefix, file1, r.pathMajor, r.pathMajor, rev)
+			return "", "", nil, fmt.Errorf("%s/%s and ...%s/%s both have ...%s module paths at revision %s", r.pathPrefix, file1, r.modFilename, r.pathMajor, r.pathMajor, rev)
 		}
 		if found2 {
 			return rev, dir2, gomod2, nil
@@ -844,7 +848,7 @@ func (r *codeRepo) findDir(ctx context.Context, version string) (rev, dir string
 		// Explicit go.mod with non-matching major version disallowed.
 		suffix := ""
 		if file2 != "" {
-			suffix = fmt.Sprintf(" (and ...%s/go.mod does not exist)", r.pathMajor)
+			suffix = fmt.Sprintf(" (and ...%s/%s does not exist)", r.pathMajor, r.modFilename)
 		}
 		if mpath1 == "" {
 			return "", "", nil, fmt.Errorf("%s is missing module path%s at revision %s", file1, suffix, rev)
@@ -866,9 +870,9 @@ func (r *codeRepo) findDir(ctx context.Context, version string) (rev, dir string
 	// Implicit go.mod below root of repo or at v2+ disallowed.
 	// Be clear about possibility of using either location for v2+.
 	if file2 != "" {
-		return "", "", nil, fmt.Errorf("missing %s/go.mod and ...%s/go.mod at revision %s", r.pathPrefix, r.pathMajor, rev)
+		return "", "", nil, fmt.Errorf("missing %s/%s and ...%s/%s at revision %s", r.pathPrefix, r.modFilename, r.pathMajor, r.modFilename, rev)
 	}
-	return "", "", nil, fmt.Errorf("missing %s/go.mod at revision %s", r.pathPrefix, rev)
+	return "", "", nil, fmt.Errorf("missing %s/%s at revision %s", r.pathPrefix, r.modFilename, rev)
 }
 
 // isMajor reports whether the versions allowed for mpath are compatible with
@@ -944,7 +948,7 @@ func (r *codeRepo) GoMod(ctx context.Context, version string) (data []byte, err 
 	if gomod != nil {
 		return gomod, nil
 	}
-	data, err = r.code.ReadFile(ctx, rev, path.Join(dir, "go.mod"), codehost.MaxGoMod)
+	data, err = r.code.ReadFile(ctx, rev, path.Join(dir, r.modFilename), codehost.MaxGoMod)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return LegacyGoMod(r.modPath), nil
@@ -1009,7 +1013,7 @@ func (r *codeRepo) retractedVersions(ctx context.Context) (func(string) bool, er
 	if err != nil {
 		return nil, err
 	}
-	f, err := modfile.ParseLax("go.mod", data, nil)
+	f, err := modfile.ParseLax(r.modFilename, data, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1049,7 +1053,7 @@ func (r *codeRepo) Zip(ctx context.Context, dst io.Writer, version string) error
 		return err
 	}
 
-	if gomod, err := r.code.ReadFile(ctx, rev, filepath.Join(subdir, "go.mod"), codehost.MaxGoMod); err == nil {
+	if gomod, err := r.code.ReadFile(ctx, rev, filepath.Join(subdir, r.modFilename), codehost.MaxGoMod); err == nil {
 		goVers := gover.GoModLookup(gomod, "go")
 		if gover.Compare(goVers, gover.Local()) > 0 {
 			return &gover.TooNewError{What: r.ModulePath() + "@" + version, GoVersion: goVers}
