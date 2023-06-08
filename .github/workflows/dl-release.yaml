@@ -3,7 +3,8 @@ name: dl release
 on:
   push:
     tags:
-      - src/cmd/go/internal/mod/cmd/dl/v[0-9]*
+      # - src/cmd/go/internal/mod/cmd/dl/v[0-9]*
+      - v[0-9]*
 
 permissions:
   contents: write
@@ -16,7 +17,8 @@ jobs:
         id: version
         run:
           # the number = "refs/head/src/cmd/go/internal/mod/cmd/dl/"
-          echo "version=${GITHUB_REF:41}" >> $GITHUB_OUTPUT
+          # the number = "refs/head/"
+          echo "version=${GITHUB_REF:10}" >> $GITHUB_OUTPUT
       -
         name: Checkout
         uses: actions/checkout@v3
@@ -48,5 +50,5 @@ jobs:
           workdir: src/cmd/go/internal/mod/cmd/dl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
+          # GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
 
