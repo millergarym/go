@@ -33,7 +33,8 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          # skip-validate as tag name won't agree with commit hash
+          args: release --clean --skip-validate
           workdir: src/cmd/go/internal/mod_dl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
