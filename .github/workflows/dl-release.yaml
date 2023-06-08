@@ -45,7 +45,7 @@ jobs:
           version: latest
           # skip-validate as tag name won't agree with commit hash
           args: release --clean --skip-validate
-          workdir: src/cmd/go/internal/mod_dl
+          workdir: src/cmd/go/internal/mod/cmd/dl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
