@@ -1,0 +1,52 @@
+name: dl release
+
+on:
+  push:
+    tags:
+      - src/cmd/go/internal/mod/cmd/dl/v[0-9]*
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine version
+        id: version
+        run:
+          # the number = "refs/head/src/cmd/go/internal/mod/cmd/dl/"
+          echo "version=${GITHUB_REF:41}" >> $GITHUB_OUTPUT
+      -
+        name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+      -
+        name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.20.5
+      -
+        name: Go Bootstrap
+        run: |
+          cd src
+          ./make.bash
+          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+      -
+        name: Go env
+        run:
+          go env
+      -
+        name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v4
+        with:
+          distribution: goreleaser
+          version: latest
+          # skip-validate as tag name won't agree with commit hash
+          args: release --clean --skip-validate
+          workdir: src/cmd/go/internal/mod_dl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
+
