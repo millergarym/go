@@ -34,6 +34,7 @@ jobs:
           go env
         env:
           GOROOT: ${{ github.workspace }}
+          GOTOOLDIR: /opt/hostedtoolcache/go/1.20.5/x64/pkg/tool/linux_amd64
       -
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v4
@@ -47,3 +48,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
           GOROOT: ${{ github.workspace }}
+          GOTOOLDIR: /opt/hostedtoolcache/go/1.20.5/x64/pkg/tool/linux_amd64
+
