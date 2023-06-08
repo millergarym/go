@@ -30,6 +30,7 @@ jobs:
       -
         name: Go Eng
         run:
+          env
           go env
         env:
           GOROOT: ${{ vars.GITHUB_WORKSPACE }}
