@@ -33,7 +33,7 @@ jobs:
           env
           go env
         env:
-          GOROOT: ${{ vars.GITHUB_WORKSPACE }}
+          GOROOT: ${{ github.workspace }}
       -
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v4
@@ -46,4 +46,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
-          GOROOT: ${{ vars.GITHUB_WORKSPACE }}
+          GOROOT: ${{ github.workspace }}
