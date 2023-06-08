@@ -1,0 +1,49 @@
+project_name: mod_download
+release:
+  github:
+    owner: millergarym
+    name: go
+  name_template: '{{.Tag}}'
+  # disable: true
+
+builds:
+- 
+  binary: dl
+  env:
+  - CGO_ENABLED=0
+  targets:
+    - linux_amd64
+    - darwin_arm64
+    - darwin_amd64
+    - windows_amd64
+  main: .
+  ldflags:
+  - -s -w -X main.ProjectName={{.ProjectName}} -X main.Version={{.Version}} -X main.Commit={{.Commit}} -X main.Date={{.Date}} -X main.ReleaseURL={{.ReleaseURL}}
+
+archives:
+  - replacements:
+    format_overrides:
+    - goos: windows
+      format: zip
+    files:
+    - licence*
+    - LICENCE*
+    - license*
+    - LICENSE*
+    - readme*
+    - README*
+    - changelog*
+    - CHANGELOG*
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'
