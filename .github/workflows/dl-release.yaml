@@ -21,20 +21,21 @@ jobs:
         name: Checkout
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       -
         name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: 1.20.5
       -
-        name: Go Eng
+        name: Go Bootstrap
         run:
-          env
+          cd src
+          ./make.bash
+          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+      -
+        name: Go env
           go env
-        env:
-          GOROOT: ${{ github.workspace }}
-          GOTOOLDIR: /opt/hostedtoolcache/go/1.20.5/x64/pkg/tool/linux_amd64
       -
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v4
@@ -47,6 +48,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
-          GOROOT: ${{ github.workspace }}
-          GOTOOLDIR: /opt/hostedtoolcache/go/1.20.5/x64/pkg/tool/linux_amd64
 
