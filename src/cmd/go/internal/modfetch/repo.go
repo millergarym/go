@@ -204,14 +204,14 @@ type lookupCacheKey struct {
 //
 // A successful return does not guarantee that the module
 // has any defined versions.
-func Lookup(ctx context.Context, proxy, path string) Repo {
+func Lookup(ctx context.Context, proxy, path, modFilename string) Repo {
 	if traceRepo {
 		defer logCall("Lookup(%q, %q)", proxy, path)()
 	}
 
 	return lookupCache.Do(lookupCacheKey{proxy, path}, func() Repo {
 		return newCachingRepo(ctx, path, func(ctx context.Context) (Repo, error) {
-			r, err := lookup(ctx, proxy, path)
+			r, err := lookup(ctx, proxy, path, modFilename)
 			if err == nil && traceRepo {
 				r = newLoggingRepo(r)
 			}
@@ -221,20 +221,20 @@ func Lookup(ctx context.Context, proxy, path string) Repo {
 }
 
 // lookup returns the module with the given module path.
-func lookup(ctx context.Context, proxy, path string) (r Repo, err error) {
+func lookup(ctx context.Context, proxy, path, modFilename string) (r Repo, err error) {
 	if cfg.BuildMod == "vendor" {
 		return nil, errLookupDisabled
 	}
 
 	switch path {
 	case "go", "toolchain":
-		return &toolchainRepo{path, Lookup(ctx, proxy, "golang.org/toolchain")}, nil
+		return &toolchainRepo{path, Lookup(ctx, proxy, "golang.org/toolchain", "go.mod")}, nil
 	}
 
 	if module.MatchPrefixPatterns(cfg.GONOPROXY, path) {
 		switch proxy {
 		case "noproxy", "direct":
-			return lookupDirect(ctx, path)
+			return lookupDirect(ctx, path, modFilename)
 		default:
 			return nil, errNoproxy
 		}
@@ -244,7 +244,7 @@ func lookup(ctx context.Context, proxy, path string) (r Repo, err error) {
 	case "off":
 		return errRepo{path, errProxyOff}, nil
 	case "direct":
-		return lookupDirect(ctx, path)
+		return lookupDirect(ctx, path, modFilename)
 	case "noproxy":
 		return nil, errUseProxy
 	default:
@@ -269,7 +269,7 @@ var (
 	errUseProxy error = notExistErrorf("path does not match GOPRIVATE/GONOPROXY")
 )
 
-func lookupDirect(ctx context.Context, path string) (Repo, error) {
+func lookupDirect(ctx context.Context, path, modFilename string) (Repo, error) {
 	security := web.SecureOnly
 
 	if module.MatchPrefixPatterns(cfg.GOINSECURE, path) {
@@ -290,7 +290,7 @@ func lookupDirect(ctx context.Context, path string) (Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newCodeRepo(code, rr.Root, path)
+	return newCodeRepo(code, rr.Root, path, modFilename)
 }
 
 func lookupCodeRepo(ctx context.Context, rr *vcs.RepoRoot) (codehost.Repo, error) {

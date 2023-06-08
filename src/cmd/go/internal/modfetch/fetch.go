@@ -59,7 +59,7 @@ func Download(ctx context.Context, mod module.Version) (dir string, err error) {
 		checkMod(ctx, mod)
 
 		// If go.mod exists (not an old legacy module), check version is not too new.
-		if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil {
+		if data, err := os.ReadFile(filepath.Join(dir, mod.ModFilename)); err == nil {
 			goVersion := gover.GoModLookup(data, "go")
 			if gover.Compare(goVersion, gover.Local()) > 0 {
 				return "", &gover.TooNewError{What: mod.String(), GoVersion: goVersion}
@@ -276,7 +276,7 @@ func downloadZip(ctx context.Context, mod module.Version, zipfile string) (err e
 		if unrecoverableErr != nil {
 			return unrecoverableErr
 		}
-		repo := Lookup(ctx, proxy, mod.Path)
+		repo := Lookup(ctx, proxy, mod.Path, mod.ModFilename)
 		err := repo.Zip(ctx, f, mod.Version)
 		if err != nil {
 			// Zip may have partially written to f before failing.
@@ -600,21 +600,21 @@ func checkMod(ctx context.Context, mod module.Version) {
 }
 
 // goModSum returns the checksum for the go.mod contents.
-func goModSum(data []byte) (string, error) {
-	return dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
+func goModSum(modFilename string, data []byte) (string, error) {
+	return dirhash.Hash1([]string{modFilename}, func(string) (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(data)), nil
 	})
 }
 
 // checkGoMod checks the given module's go.mod checksum;
 // data is the go.mod content.
-func checkGoMod(path, version string, data []byte) error {
-	h, err := goModSum(data)
+func checkGoMod(mod module.Version, data []byte) error {
+	h, err := goModSum(mod.ModFilename, data)
 	if err != nil {
-		return &module.ModuleError{Path: path, Version: version, Err: fmt.Errorf("verifying go.mod: %v", err)}
+		return &module.ModuleError{Path: mod.Path, ModFilename: mod.ModFilename, Version: mod.Version, Err: fmt.Errorf("verifying go.mod: %v", err)}
 	}
-
-	return checkModSum(module.Version{Path: path, Version: version + "/go.mod"}, h)
+	// return checkModSum(module.Version{Path: path, Version: version + "/go.mod"}, h)
+	return checkModSum(module.Version{Path: mod.Path, ModFilename: mod.ModFilename, Version: mod.Version + "/" + mod.ModFilename}, h)
 }
 
 // checkModSum checks that the recorded checksum for mod is h.
@@ -716,8 +716,8 @@ func addModSumLocked(mod module.Version, h string) {
 func checkSumDB(mod module.Version, h string) error {
 	modWithoutSuffix := mod
 	noun := "module"
-	if before, found := strings.CutSuffix(mod.Version, "/go.mod"); found {
-		noun = "go.mod"
+	if before, found := strings.CutSuffix(mod.Version, "/"+mod.ModFilename); found {
+		noun = mod.ModFilename
 		modWithoutSuffix.Version = before
 	}
 
