@@ -1,0 +1,40 @@
+name: dl release
+
+on:
+  push:
+    tags:
+      - src/cmd/go/internal/mod_dl/v[0-9]*
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine version
+        id: version
+        run:
+          # the number = "ref/head/src/cmd/go/internal/mod_dl/"
+          echo "version=${GITHUB_REF:36}" >> $GITHUB_OUTPUT
+      -
+        name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      -
+        name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.20.5
+      -
+        name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v4
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+          workdir: src/cmd/go/internal/mod_dl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
